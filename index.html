@@ -3,63 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NOAA ERDDAP Buoy & Weather Map</title>
-    
-    <!-- Leaflet CSS for Map Styling -->
+    <title>NOAA Buoy Map</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    
     <style>
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            margin: 0; padding: 0; 
-            display: flex; flex-direction: column; 
-            height: 100vh; background-color: #f4f6f8; 
-        }
-        header { 
-            background: #003366; color: white; 
-            padding: 15px 20px; text-align: center; 
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 1000;
-        }
-        header h2 { margin: 0; padding-bottom: 5px; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background-color: #f4f6f8; }
+        header { background: #003366; color: white; padding: 15px 20px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 1000; }
+        header h2 { margin: 0; padding-bottom: 5px; font-size: 20px;}
         header p { margin: 0; font-size: 14px; opacity: 0.8; }
-        #app-container { 
-            display: flex; flex: 1; 
-            flex-direction: column; overflow: hidden; 
-        }
-        #map { 
-            flex: 1; min-height: 45vh; 
-            border-bottom: 3px solid #003366; 
-        }
-        #data-panel { 
-            flex: 1; padding: 20px; 
-            overflow-y: auto; background: white; 
-            display: flex; flex-direction: column; align-items: center;
-        }
-        canvas { 
-            max-height: 300px; width: 100%; max-width: 1000px;
-        }
-        .loading { 
-            display: none; color: #003366; 
-            font-weight: bold; margin-bottom: 10px;
-        }
-        @media (min-width: 768px) {
-            #app-container { flex-direction: row; }
-            #map { border-bottom: none; border-right: 3px solid #003366; }
-            #data-panel { padding: 30px; }
-        }
+        #app-container { display: flex; flex: 1; flex-direction: column; overflow: hidden; }
+        #map { flex: 1; min-height: 45vh; border-bottom: 3px solid #003366; }
+        #data-panel { flex: 1; padding: 20px; overflow-y: auto; background: white; display: flex; flex-direction: column; align-items: center; }
+        canvas { max-height: 300px; width: 100%; max-width: 1000px; }
+        .loading { display: none; color: #003366; font-weight: bold; margin-bottom: 10px; }
+        @media (min-width: 768px) { #app-container { flex-direction: row; } #map { border-bottom: none; border-right: 3px solid #003366; } #data-panel { padding: 30px; } }
     </style>
 </head>
 <body>
     <header>
-        <h2>🌊 NOAA ERDDAP Interactive Buoy Explorer</h2>
-        <p>Click any buoy marker to fetch live & historical data directly from NOAA</p>
+        <h2>🌊 Michigan & NOAA Buoy Explorer</h2>
+        <p>Click any buoy marker to fetch live water temperatures</p>
     </header>
-
     <div id="app-container">
-        <!-- Interactive Map -->
         <div id="map"></div>
-        
-        <!-- Data & Chart Panel -->
         <div id="data-panel">
             <h3 id="station-title">Select a buoy on the map</h3>
             <p id="loading-text" class="loading">Fetching data from NOAA ERDDAP...</p>
@@ -67,49 +32,39 @@
         </div>
     </div>
 
-    <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
     <script>
-        // 1. Initialize Interactive Map (Centered on North America)
-        const map = L.map('map').setView([39.0, -96.0], 4); 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
+        // Center the map specifically on Lake Michigan
+        const map = L.map('map').setView([43.2, -86.5], 7); 
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
 
-        // 2. Define a Selection of Buoys (Station ID, Lat, Lon, Name)
+        // Expanded list to include West Michigan Buoys
         const buoys = [
+            { id: "45020", lat: 43.18, lon: -86.36, name: "Muskegon, MI" },
+            { id: "45024", lat: 43.95, lon: -86.63, name: "Ludington, MI" },
+            { id: "45029", lat: 42.75, lon: -86.36, name: "Holland, MI" },
+            { id: "45026", lat: 42.11, lon: -86.39, name: "St. Joseph, MI" },
+            { id: "45007", lat: 42.67, lon: -87.02, name: "South Lake Michigan" },
+            { id: "45002", lat: 45.34, lon: -86.41, name: "North Lake Michigan" },
             { id: "46042", lat: 36.75, lon: -122.42, name: "Monterey, CA" },
-            { id: "44092", lat: 39.81, lon: -73.08, name: "New York Bight" },
-            { id: "42040", lat: 29.21, lon: -88.21, name: "Luke Offshore, Gulf of Mexico" },
-            { id: "45003", lat: 45.35, lon: -82.84, name: "Lake Huron" },
-            { id: "51001", lat: 24.38, lon: -162.06, name: "Northwest Hawaii" },
-            { id: "41043", lat: 21.06, lon: -64.83, name: "NE Puerto Rico" }
+            { id: "44092", lat: 39.81, lon: -73.08, name: "New York Bight" }
         ];
 
-        // 3. Add Markers to the Map
         buoys.forEach(buoy => {
             const marker = L.marker([buoy.lat, buoy.lon]).addTo(map);
             marker.bindPopup(`<b>${buoy.name}</b><br>Station ID: ${buoy.id}<br><br><i>Click to load data</i>`);
-            
-            // Trigger ERDDAP fetch when marker is clicked
-            marker.on('click', () => {
-                fetchErddapData(buoy.id, buoy.name);
-            });
+            marker.on('click', () => { fetchErddapData(buoy.id, buoy.name); });
         });
 
-        // 4. Setup Chart.js Instance
         let chartInstance = null;
 
         async function fetchErddapData(stationId, stationName) {
-            document.getElementById('station-title').innerText = `7-Day History: Station ${stationId} (${stationName})`;
+            document.getElementById('station-title').innerText = `7-Day Water Temp: Station ${stationId} (${stationName})`;
             document.getElementById('loading-text').style.display = 'block';
 
-            // ERDDAP REST API URL (CoastWatch endpoint for NDBC Met data)
-            // Queries Time, Water Temp (wtmp), and Air Temp (atmp) bounded by the last 7 days
-            const url = `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json?time,wtmp,atmp&station="${stationId}"&time>=max(time)-7days`;
+            // Updated API URL: Only asks for Water Temp (wtmp) to prevent crashes
+            const url = `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json?time,wtmp&station="${stationId}"&time>=now-7days`;
 
             try {
                 const response = await fetch(url);
@@ -117,82 +72,51 @@
                 const jsonData = await response.json();
                 
                 const rows = jsonData.table.rows;
-                
-                // Arrays to hold the parsed ERDDAP data
                 const labels = [];
                 const waterTemp = [];
-                const airTemp = [];
 
-                // ERDDAP returns rows as: [time_string, wtmp, atmp]
                 rows.forEach(row => {
                     const dateObj = new Date(row[0]);
-                    // Format time cleanly for the chart X-axis
-                    const timeString = dateObj.toLocaleDateString() + ' ' + dateObj.getHours() + ':00';
-                    
-                    labels.push(timeString);
+                    labels.push(dateObj.toLocaleDateString() + ' ' + dateObj.getHours() + ':00');
                     waterTemp.push(row[1]);
-                    airTemp.push(row[2]);
                 });
 
-                // Send data to the chart
-                updateChart(labels, waterTemp, airTemp);
+                updateChart(labels, waterTemp);
 
             } catch (error) {
                 console.error(error);
-                alert("Could not fetch data from ERDDAP. The dataset may be currently updating or the buoy might be offline.");
+                alert("Data currently unavailable for this buoy. It may be offline for maintenance or not reporting water temperatures right now.");
             } finally {
                 document.getElementById('loading-text').style.display = 'none';
             }
         }
 
-        // 5. Render Chart Data
-        function updateChart(labels, waterTemp, airTemp) {
+        function updateChart(labels, waterTemp) {
             const ctx = document.getElementById('weatherChart').getContext('2d');
-            
-            // Destroy previous chart if it exists to prevent overlapping graphics
-            if (chartInstance) {
-                chartInstance.destroy();
-            }
+            if (chartInstance) chartInstance.destroy();
 
             chartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: labels,
-                    datasets: [
-                        {
-                            label: 'Water Temp (°C)',
-                            data: waterTemp,
-                            borderColor: '#0055ff',
-                            backgroundColor: 'rgba(0, 85, 255, 0.1)',
-                            borderWidth: 2,
-                            fill: true,
-                            pointRadius: 0,
-                            tension: 0.2 // Softens the curve
-                        },
-                        {
-                            label: 'Air Temp (°C)',
-                            data: airTemp,
-                            borderColor: '#ff4400',
-                            backgroundColor: 'rgba(255, 68, 0, 0.1)',
-                            borderWidth: 2,
-                            fill: true,
-                            pointRadius: 0,
-                            tension: 0.2
-                        }
-                    ]
+                    datasets: [{
+                        label: 'Water Temp (°C)',
+                        data: waterTemp,
+                        borderColor: '#0055ff',
+                        backgroundColor: 'rgba(0, 85, 255, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        pointRadius: 0,
+                        tension: 0.2
+                    }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     scales: {
-                        x: { 
-                            title: { display: true, text: 'Time (Last 7 Days)' },
-                            ticks: { maxTicksLimit: 10 } 
-                        },
-                        y: { 
-                            title: { display: true, text: 'Temperature (°C)' } 
-                        }
+                        x: { title: { display: true, text: 'Time (Last 7 Days)' }, ticks: { maxTicksLimit: 10 } },
+                        y: { title: { display: true, text: 'Water Temp (°C)' } }
                     }
                 }
             });
