@@ -69,7 +69,8 @@
             
             if (chartInstance) chartInstance.destroy();
 
-            const url = `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json?time,wtmp&station="${stationId}"&time>=now-7days`;
+            // FIX: Changed "now-7days" back to "max(time)-7days" so it doesn't crash if NOAA is delayed
+            const url = `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json?time,wtmp&station="${stationId}"&time>=max(time)-7days`;
 
             try {
                 const response = await fetch(url);
