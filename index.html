@@ -14,7 +14,8 @@
         #map { flex: 1; min-height: 45vh; border-bottom: 3px solid #003366; }
         #data-panel { flex: 1; padding: 20px; overflow-y: auto; background: white; display: flex; flex-direction: column; align-items: center; }
         canvas { max-height: 300px; width: 100%; max-width: 1000px; }
-        .loading { display: none; color: #003366; font-weight: bold; margin-bottom: 10px; }
+        .loading { display: none; color: #003366; font-weight: bold; margin-bottom: 10px; text-align: center; }
+        .error-text { color: #cc0000; }
         @media (min-width: 768px) { #app-container { flex-direction: row; } #map { border-bottom: none; border-right: 3px solid #003366; } #data-panel { padding: 30px; } }
     </style>
 </head>
@@ -35,20 +36,18 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        // Center the map specifically on Lake Michigan
         const map = L.map('map').setView([43.2, -86.5], 7); 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
 
-        // Expanded list to include West Michigan Buoys
+        // Corrected Buoy IDs
         const buoys = [
-            { id: "45020", lat: 43.18, lon: -86.36, name: "Muskegon, MI" },
+            { id: "45161", lat: 43.18, lon: -86.35, name: "Muskegon, MI" },
             { id: "45024", lat: 43.95, lon: -86.63, name: "Ludington, MI" },
             { id: "45029", lat: 42.75, lon: -86.36, name: "Holland, MI" },
             { id: "45026", lat: 42.11, lon: -86.39, name: "St. Joseph, MI" },
             { id: "45007", lat: 42.67, lon: -87.02, name: "South Lake Michigan" },
             { id: "45002", lat: 45.34, lon: -86.41, name: "North Lake Michigan" },
-            { id: "46042", lat: 36.75, lon: -122.42, name: "Monterey, CA" },
-            { id: "44092", lat: 39.81, lon: -73.08, name: "New York Bight" }
+            { id: "45020", lat: 44.79, lon: -85.60, name: "Grand Traverse Bay, MI" }
         ];
 
         buoys.forEach(buoy => {
@@ -60,15 +59,21 @@
         let chartInstance = null;
 
         async function fetchErddapData(stationId, stationName) {
-            document.getElementById('station-title').innerText = `7-Day Water Temp: Station ${stationId} (${stationName})`;
-            document.getElementById('loading-text').style.display = 'block';
+            const titleEl = document.getElementById('station-title');
+            const loadingEl = document.getElementById('loading-text');
+            
+            titleEl.innerText = `7-Day Water Temp: Station ${stationId} (${stationName})`;
+            loadingEl.style.display = 'block';
+            loadingEl.className = 'loading';
+            loadingEl.innerText = 'Fetching data from NOAA ERDDAP...';
+            
+            if (chartInstance) chartInstance.destroy();
 
-            // Updated API URL: Only asks for Water Temp (wtmp) to prevent crashes
             const url = `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json?time,wtmp&station="${stationId}"&time>=now-7days`;
 
             try {
                 const response = await fetch(url);
-                if (!response.ok) throw new Error("ERDDAP request failed");
+                if (!response.ok) throw new Error("ERDDAP request failed or buoy offline");
                 const jsonData = await response.json();
                 
                 const rows = jsonData.table.rows;
@@ -81,20 +86,18 @@
                     waterTemp.push(row[1]);
                 });
 
+                loadingEl.style.display = 'none';
                 updateChart(labels, waterTemp);
 
             } catch (error) {
                 console.error(error);
-                alert("Data currently unavailable for this buoy. It may be offline for maintenance or not reporting water temperatures right now.");
-            } finally {
-                document.getElementById('loading-text').style.display = 'none';
+                loadingEl.className = 'loading error-text';
+                loadingEl.innerText = "Data currently unavailable. This buoy is offline, pulled for maintenance, or not reporting water temps right now.";
             }
         }
 
         function updateChart(labels, waterTemp) {
             const ctx = document.getElementById('weatherChart').getContext('2d');
-            if (chartInstance) chartInstance.destroy();
-
             chartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
