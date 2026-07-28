@@ -28,7 +28,7 @@
         <div id="map"></div>
         <div id="data-panel">
             <h3 id="station-title">Select a buoy on the map</h3>
-            <p id="loading-text" class="loading">Fetching data from NOAA ERDDAP...</p>
+            <p id="loading-text" class="loading">Connecting directly to NOAA NDBC...</p>
             <canvas id="weatherChart"></canvas>
         </div>
     </div>
@@ -52,47 +52,79 @@
         buoys.forEach(buoy => {
             const marker = L.marker([buoy.lat, buoy.lon]).addTo(map);
             marker.bindPopup(`<b>${buoy.name}</b><br>Station ID: ${buoy.id}<br><br><i>Click to load data</i>`);
-            marker.on('click', () => { fetchErddapData(buoy.id, buoy.name); });
+            marker.on('click', () => { fetchNDBCData(buoy.id, buoy.name); });
         });
 
         let chartInstance = null;
 
-        async function fetchErddapData(stationId, stationName) {
+        // Custom time formatter for clean chart labels
+        function formatTime(date) {
+            const month = date.toLocaleDateString('en-US', { month: 'short' });
+            const day = date.getDate();
+            let hour = date.getHours();
+            const ampm = hour >= 12 ? 'pm' : 'am';
+            hour = hour % 12;
+            hour = hour ? hour : 12; 
+            return `${month} ${day}, ${hour}${ampm}`;
+        }
+
+        async function fetchNDBCData(stationId, stationName) {
             const titleEl = document.getElementById('station-title');
             const loadingEl = document.getElementById('loading-text');
             
             titleEl.innerText = `7-Day Water Temp: Station ${stationId} (${stationName})`;
             loadingEl.style.display = 'block';
             loadingEl.className = 'loading';
-            loadingEl.innerText = 'Fetching data from NOAA ERDDAP...';
+            loadingEl.innerText = 'Connecting directly to NDBC...';
             
             if (chartInstance) chartInstance.destroy();
 
-            // Generate a strict, native ISO date string for exactly 7 days ago
-            const d = new Date();
-            d.setDate(d.getDate() - 7);
-            const timeString = d.toISOString(); 
-
-            // FIX: Safari requires strict URL encoding. %22 is quotation mark, %3E is greater-than sign
-            const url = `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json?time,wtmp&station=%22${stationId}%22&time%3E=${timeString}`;
+            // Bypass CORS and hit the raw NDBC text file directly 
+            const ndbcUrl = `https://www.ndbc.noaa.gov/data/realtime2/${stationId}.txt`;
+            const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(ndbcUrl)}`;
 
             try {
                 const response = await fetch(url);
-                if (!response.ok) throw new Error("ERDDAP request failed");
-                const jsonData = await response.json();
+                if (!response.ok) throw new Error("Could not connect to NDBC");
+                const text = await response.text();
                 
-                const rows = jsonData.table.rows;
+                // If it returns an HTML error page instead of data text
+                if (text.trim().startsWith("<")) throw new Error("Offline");
+
+                const lines = text.trim().split('\n');
                 const labels = [];
                 const waterTemp = [];
+                
+                const now = new Date();
+                const sevenDaysAgo = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
 
-                rows.forEach(row => {
-                    const dateObj = new Date(row[0]);
-                    labels.push(dateObj.toLocaleDateString() + ' ' + dateObj.getHours() + ':00');
+                // Parse standard NDBC text rows (skip first two header rows)
+                for (let i = 2; i < lines.length; i++) {
+                    const cols = lines[i].trim().split(/\s+/);
+                    if (cols.length < 15) continue;
                     
-                    // Safely parse numbers (ERDDAP outputs "NaN" for missing data)
-                    const temp = parseFloat(row[1]);
-                    waterTemp.push(isNaN(temp) ? null : temp);
-                });
+                    const year = parseInt(cols[0]);
+                    const month = parseInt(cols[1]) - 1; // JS dates are 0-11
+                    const day = parseInt(cols[2]);
+                    const hour = parseInt(cols[3]);
+                    const min = parseInt(cols[4]);
+                    
+                    const dateObj = new Date(Date.UTC(year, month, day, hour, min));
+                    
+                    // Since file is newest first, stop reading once we hit 7 days ago
+                    if (dateObj < sevenDaysAgo) break;
+
+                    const wtmpStr = cols[14]; 
+                    if (wtmpStr === "MM") continue; // "MM" is NDBC's flag for missing/broken sensor
+                    
+                    const tempC = parseFloat(wtmpStr);
+                    const tempF = (tempC * 9/5) + 32; // Convert to Fahrenheit
+
+                    labels.unshift(formatTime(dateObj));
+                    waterTemp.unshift(tempF);
+                }
+                
+                if (waterTemp.length === 0) throw new Error("No recent data");
 
                 loadingEl.style.display = 'none';
                 updateChart(labels, waterTemp);
@@ -100,7 +132,7 @@
             } catch (error) {
                 console.error(error);
                 loadingEl.className = 'loading error-text';
-                loadingEl.innerText = "Data currently unavailable. This buoy is offline, pulled for maintenance, or Safari is blocking the request.";
+                loadingEl.innerText = "Data currently unavailable. This buoy is pulled from the water or not reporting temps right now.";
             }
         }
 
@@ -111,14 +143,14 @@
                 data: {
                     labels: labels,
                     datasets: [{
-                        label: 'Water Temp (°C)',
+                        label: 'Water Temp (°F)',
                         data: waterTemp,
                         borderColor: '#0055ff',
                         backgroundColor: 'rgba(0, 85, 255, 0.1)',
                         borderWidth: 2,
                         fill: true,
                         pointRadius: 0,
-                        spanGaps: true, // Smooths over missing hourly reports
+                        spanGaps: true,
                         tension: 0.2
                     }]
                 },
@@ -128,7 +160,7 @@
                     interaction: { mode: 'index', intersect: false },
                     scales: {
                         x: { title: { display: true, text: 'Time (Last 7 Days)' }, ticks: { maxTicksLimit: 10 } },
-                        y: { title: { display: true, text: 'Water Temp (°C)' } }
+                        y: { title: { display: true, text: 'Water Temp (°F)' } }
                     }
                 }
             });
