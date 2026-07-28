@@ -39,7 +39,6 @@
         const map = L.map('map').setView([43.2, -86.5], 7); 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
 
-        // Corrected Buoy IDs
         const buoys = [
             { id: "45161", lat: 43.18, lon: -86.35, name: "Muskegon, MI" },
             { id: "45024", lat: 43.95, lon: -86.63, name: "Ludington, MI" },
@@ -69,12 +68,17 @@
             
             if (chartInstance) chartInstance.destroy();
 
-            // FIX: Changed "now-7days" back to "max(time)-7days" so it doesn't crash if NOAA is delayed
-            const url = `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json?time,wtmp&station="${stationId}"&time>=max(time)-7days`;
+            // Generate a strict, native ISO date string for exactly 7 days ago
+            const d = new Date();
+            d.setDate(d.getDate() - 7);
+            const timeString = d.toISOString(); 
+
+            // FIX: Safari requires strict URL encoding. %22 is quotation mark, %3E is greater-than sign
+            const url = `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json?time,wtmp&station=%22${stationId}%22&time%3E=${timeString}`;
 
             try {
                 const response = await fetch(url);
-                if (!response.ok) throw new Error("ERDDAP request failed or buoy offline");
+                if (!response.ok) throw new Error("ERDDAP request failed");
                 const jsonData = await response.json();
                 
                 const rows = jsonData.table.rows;
@@ -84,7 +88,10 @@
                 rows.forEach(row => {
                     const dateObj = new Date(row[0]);
                     labels.push(dateObj.toLocaleDateString() + ' ' + dateObj.getHours() + ':00');
-                    waterTemp.push(row[1]);
+                    
+                    // Safely parse numbers (ERDDAP outputs "NaN" for missing data)
+                    const temp = parseFloat(row[1]);
+                    waterTemp.push(isNaN(temp) ? null : temp);
                 });
 
                 loadingEl.style.display = 'none';
@@ -93,7 +100,7 @@
             } catch (error) {
                 console.error(error);
                 loadingEl.className = 'loading error-text';
-                loadingEl.innerText = "Data currently unavailable. This buoy is offline, pulled for maintenance, or not reporting water temps right now.";
+                loadingEl.innerText = "Data currently unavailable. This buoy is offline, pulled for maintenance, or Safari is blocking the request.";
             }
         }
 
@@ -111,6 +118,7 @@
                         borderWidth: 2,
                         fill: true,
                         pointRadius: 0,
+                        spanGaps: true, // Smooths over missing hourly reports
                         tension: 0.2
                     }]
                 },
