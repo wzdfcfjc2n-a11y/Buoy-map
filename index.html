@@ -39,67 +39,78 @@
         const map = L.map('map').setView([43.2, -86.5], 7); 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
 
-        const locations = [
-            { lat: 43.18, lon: -86.35, name: "Muskegon, MI" },
-            { lat: 43.95, lon: -86.63, name: "Ludington, MI" },
-            { lat: 42.75, lon: -86.36, name: "Holland, MI" },
-            { lat: 42.11, lon: -86.39, name: "St. Joseph, MI" },
-            { lat: 44.79, lon: -85.60, name: "Grand Traverse Bay, MI" }
+        // Standard NDBC buoy stations in Lake Michigan
+        const buoys = [
+            { id: "45161", lat: 43.18, lon: -86.35, name: "Muskegon, MI" },
+            { id: "45024", lat: 43.95, lon: -86.63, name: "Ludington, MI" },
+            { id: "45029", lat: 42.75, lon: -86.36, name: "Holland, MI" },
+            { id: "45026", lat: 42.11, lon: -86.39, name: "St. Joseph, MI" },
+            { id: "45020", lat: 44.79, lon: -85.60, name: "Grand Traverse Bay, MI" }
         ];
 
-        locations.forEach(loc => {
-            const marker = L.marker([loc.lat, loc.lon]).addTo(map);
-            marker.bindPopup(`<b>${loc.name}</b><br><i>Click to load data</i>`);
-            marker.on('click', () => { fetchWeatherData(loc.lat, loc.lon, loc.name); });
+        buoys.forEach(buoy => {
+            const marker = L.marker([buoy.lat, buoy.lon]).addTo(map);
+            marker.bindPopup(`<b>${buoy.name}</b><br>Station ID: ${buoy.id}<br><br><i>Click to load data</i>`);
+            marker.on('click', () => { fetchErddapData(buoy.id, buoy.name); });
         });
 
         let chartInstance = null;
 
-        function formatTime(isoString) {
-            const date = new Date(isoString);
-            const month = date.toLocaleDateString('en-US', { month: 'short' });
-            const day = date.getDate();
-            let hour = date.getHours();
+        function formatTime(dateObj) {
+            const month = dateObj.toLocaleDateString('en-US', { month: 'short' });
+            const day = dateObj.getDate();
+            let hour = dateObj.getHours();
             const ampm = hour >= 12 ? 'pm' : 'am';
             hour = hour % 12;
             hour = hour ? hour : 12; 
             return `${month} ${day}, ${hour}${ampm}`;
         }
 
-        async function fetchWeatherData(lat, lon, name) {
+        async function fetchErddapData(stationId, stationName) {
             const titleEl = document.getElementById('station-title');
             const loadingEl = document.getElementById('loading-text');
             
-            titleEl.innerText = `7-Day Water Temp: ${name}`;
+            titleEl.innerText = `7-Day Water Temp: ${stationName}`;
             loadingEl.style.display = 'block';
             loadingEl.className = 'loading';
-            loadingEl.innerText = 'Fetching secure data...';
+            loadingEl.innerText = 'Connecting directly to NOAA...';
             
             if (chartInstance) chartInstance.destroy();
 
-            // Open-Meteo Marine API - No proxies, 100% Safari compatible!
-            const url = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&hourly=ocean_temperature&past_days=7&forecast_days=0`;
+            // Create a strict ISO date string for 7 days ago
+            const d = new Date();
+            d.setDate(d.getDate() - 7);
+            
+            // CRITICAL FIX: Strip the fractional milliseconds (.123Z) from the time string!
+            // NOAA ERDDAP rejects milliseconds and will throw a server error if they are included.
+            const timeString = d.toISOString().split('.')[0] + 'Z'; 
+
+            // Safely URL-encoded for Safari: %22 is ("), %3E is (>)
+            const url = `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json?time,wtmp&station=%22${stationId}%22&time%3E=${timeString}`;
 
             try {
                 const response = await fetch(url);
-                if (!response.ok) throw new Error("API request failed");
-                const data = await response.json();
+                if (!response.ok) throw new Error("NOAA ERDDAP database request failed");
+                const jsonData = await response.json();
                 
+                const rows = jsonData.table.rows;
                 const labels = [];
                 const waterTempF = [];
-                
-                const times = data.hourly.time;
-                const tempsC = data.hourly.ocean_temperature;
 
-                for (let i = 0; i < times.length; i++) {
-                    if (tempsC[i] !== null) {
-                        labels.push(formatTime(times[i]));
-                        // Automatically converts Celsius to Fahrenheit
-                        waterTempF.push((tempsC[i] * 9/5) + 32);
+                rows.forEach(row => {
+                    const dateObj = new Date(row[0]);
+                    labels.push(formatTime(dateObj));
+                    
+                    const tempC = parseFloat(row[1]);
+                    // Only convert and chart valid numbers. If NOAA reports a broken sensor (NaN), skip it gracefully.
+                    if (!isNaN(tempC)) {
+                        waterTempF.push((tempC * 9/5) + 32);
+                    } else {
+                        waterTempF.push(null);
                     }
-                }
+                });
 
-                if (waterTempF.length === 0) throw new Error("No data");
+                if (waterTempF.length === 0) throw new Error("No recent temperature data found");
 
                 loadingEl.style.display = 'none';
                 updateChart(labels, waterTempF);
@@ -107,7 +118,7 @@
             } catch (error) {
                 console.error(error);
                 loadingEl.className = 'loading error-text';
-                loadingEl.innerText = "Error loading data. Please check your internet connection.";
+                loadingEl.innerText = "Data currently unavailable. The buoy may be offline or NOAA is delaying updates.";
             }
         }
 
