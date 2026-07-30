@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NOAA Buoy Map</title>
+    <title>Michigan Buoy Map</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background-color: #f4f6f8; }
@@ -21,14 +21,14 @@
 </head>
 <body>
     <header>
-        <h2>🌊 Michigan & NOAA Buoy Explorer</h2>
-        <p>Click any buoy marker to fetch live water temperatures</p>
+        <h2>🌊 Michigan Water Temp Explorer</h2>
+        <p>Click any marker to fetch live water temperatures</p>
     </header>
     <div id="app-container">
         <div id="map"></div>
         <div id="data-panel">
-            <h3 id="station-title">Select a buoy on the map</h3>
-            <p id="loading-text" class="loading">Connecting directly to NOAA NDBC...</p>
+            <h3 id="station-title">Select a location on the map</h3>
+            <p id="loading-text" class="loading">Loading data securely...</p>
             <canvas id="weatherChart"></canvas>
         </div>
     </div>
@@ -39,26 +39,24 @@
         const map = L.map('map').setView([43.2, -86.5], 7); 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
 
-        const buoys = [
-            { id: "45161", lat: 43.18, lon: -86.35, name: "Muskegon, MI" },
-            { id: "45024", lat: 43.95, lon: -86.63, name: "Ludington, MI" },
-            { id: "45029", lat: 42.75, lon: -86.36, name: "Holland, MI" },
-            { id: "45026", lat: 42.11, lon: -86.39, name: "St. Joseph, MI" },
-            { id: "45007", lat: 42.67, lon: -87.02, name: "South Lake Michigan" },
-            { id: "45002", lat: 45.34, lon: -86.41, name: "North Lake Michigan" },
-            { id: "45020", lat: 44.79, lon: -85.60, name: "Grand Traverse Bay, MI" }
+        const locations = [
+            { lat: 43.18, lon: -86.35, name: "Muskegon, MI" },
+            { lat: 43.95, lon: -86.63, name: "Ludington, MI" },
+            { lat: 42.75, lon: -86.36, name: "Holland, MI" },
+            { lat: 42.11, lon: -86.39, name: "St. Joseph, MI" },
+            { lat: 44.79, lon: -85.60, name: "Grand Traverse Bay, MI" }
         ];
 
-        buoys.forEach(buoy => {
-            const marker = L.marker([buoy.lat, buoy.lon]).addTo(map);
-            marker.bindPopup(`<b>${buoy.name}</b><br>Station ID: ${buoy.id}<br><br><i>Click to load data</i>`);
-            marker.on('click', () => { fetchNDBCData(buoy.id, buoy.name); });
+        locations.forEach(loc => {
+            const marker = L.marker([loc.lat, loc.lon]).addTo(map);
+            marker.bindPopup(`<b>${loc.name}</b><br><i>Click to load data</i>`);
+            marker.on('click', () => { fetchWeatherData(loc.lat, loc.lon, loc.name); });
         });
 
         let chartInstance = null;
 
-        // Custom time formatter for clean chart labels
-        function formatTime(date) {
+        function formatTime(isoString) {
+            const date = new Date(isoString);
             const month = date.toLocaleDateString('en-US', { month: 'short' });
             const day = date.getDate();
             let hour = date.getHours();
@@ -68,71 +66,48 @@
             return `${month} ${day}, ${hour}${ampm}`;
         }
 
-        async function fetchNDBCData(stationId, stationName) {
+        async function fetchWeatherData(lat, lon, name) {
             const titleEl = document.getElementById('station-title');
             const loadingEl = document.getElementById('loading-text');
             
-            titleEl.innerText = `7-Day Water Temp: Station ${stationId} (${stationName})`;
+            titleEl.innerText = `7-Day Water Temp: ${name}`;
             loadingEl.style.display = 'block';
             loadingEl.className = 'loading';
-            loadingEl.innerText = 'Connecting directly to NDBC...';
+            loadingEl.innerText = 'Fetching secure data...';
             
             if (chartInstance) chartInstance.destroy();
 
-            // Bypass CORS and hit the raw NDBC text file directly 
-            const ndbcUrl = `https://www.ndbc.noaa.gov/data/realtime2/${stationId}.txt`;
-            const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(ndbcUrl)}`;
+            // Open-Meteo Marine API - No proxies, 100% Safari compatible!
+            const url = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&hourly=ocean_temperature&past_days=7&forecast_days=0`;
 
             try {
                 const response = await fetch(url);
-                if (!response.ok) throw new Error("Could not connect to NDBC");
-                const text = await response.text();
+                if (!response.ok) throw new Error("API request failed");
+                const data = await response.json();
                 
-                // If it returns an HTML error page instead of data text
-                if (text.trim().startsWith("<")) throw new Error("Offline");
-
-                const lines = text.trim().split('\n');
                 const labels = [];
-                const waterTemp = [];
+                const waterTempF = [];
                 
-                const now = new Date();
-                const sevenDaysAgo = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+                const times = data.hourly.time;
+                const tempsC = data.hourly.ocean_temperature;
 
-                // Parse standard NDBC text rows (skip first two header rows)
-                for (let i = 2; i < lines.length; i++) {
-                    const cols = lines[i].trim().split(/\s+/);
-                    if (cols.length < 15) continue;
-                    
-                    const year = parseInt(cols[0]);
-                    const month = parseInt(cols[1]) - 1; // JS dates are 0-11
-                    const day = parseInt(cols[2]);
-                    const hour = parseInt(cols[3]);
-                    const min = parseInt(cols[4]);
-                    
-                    const dateObj = new Date(Date.UTC(year, month, day, hour, min));
-                    
-                    // Since file is newest first, stop reading once we hit 7 days ago
-                    if (dateObj < sevenDaysAgo) break;
-
-                    const wtmpStr = cols[14]; 
-                    if (wtmpStr === "MM") continue; // "MM" is NDBC's flag for missing/broken sensor
-                    
-                    const tempC = parseFloat(wtmpStr);
-                    const tempF = (tempC * 9/5) + 32; // Convert to Fahrenheit
-
-                    labels.unshift(formatTime(dateObj));
-                    waterTemp.unshift(tempF);
+                for (let i = 0; i < times.length; i++) {
+                    if (tempsC[i] !== null) {
+                        labels.push(formatTime(times[i]));
+                        // Automatically converts Celsius to Fahrenheit
+                        waterTempF.push((tempsC[i] * 9/5) + 32);
+                    }
                 }
-                
-                if (waterTemp.length === 0) throw new Error("No recent data");
+
+                if (waterTempF.length === 0) throw new Error("No data");
 
                 loadingEl.style.display = 'none';
-                updateChart(labels, waterTemp);
+                updateChart(labels, waterTempF);
 
             } catch (error) {
                 console.error(error);
                 loadingEl.className = 'loading error-text';
-                loadingEl.innerText = "Data currently unavailable. This buoy is pulled from the water or not reporting temps right now.";
+                loadingEl.innerText = "Error loading data. Please check your internet connection.";
             }
         }
 
