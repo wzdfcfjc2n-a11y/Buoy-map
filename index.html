@@ -28,7 +28,7 @@
         <div id="map"></div>
         <div id="data-panel">
             <h3 id="station-title">Select a location on the map</h3>
-            <p id="loading-text" class="loading">Loading data securely...</p>
+            <p id="loading-text" class="loading">Loading live text file...</p>
             <canvas id="weatherChart"></canvas>
         </div>
     </div>
@@ -39,7 +39,6 @@
         const map = L.map('map').setView([43.2, -86.5], 7); 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
 
-        // Standard NDBC buoy stations in Lake Michigan
         const buoys = [
             { id: "45161", lat: 43.18, lon: -86.35, name: "Muskegon, MI" },
             { id: "45024", lat: 43.95, lon: -86.63, name: "Ludington, MI" },
@@ -51,7 +50,7 @@
         buoys.forEach(buoy => {
             const marker = L.marker([buoy.lat, buoy.lon]).addTo(map);
             marker.bindPopup(`<b>${buoy.name}</b><br>Station ID: ${buoy.id}<br><br><i>Click to load data</i>`);
-            marker.on('click', () => { fetchErddapData(buoy.id, buoy.name); });
+            marker.on('click', () => { fetchNDBCData(buoy.id, buoy.name); });
         });
 
         let chartInstance = null;
@@ -66,59 +65,70 @@
             return `${month} ${day}, ${hour}${ampm}`;
         }
 
-        async function fetchErddapData(stationId, stationName) {
+        async function fetchNDBCData(stationId, stationName) {
             const titleEl = document.getElementById('station-title');
             const loadingEl = document.getElementById('loading-text');
             
             titleEl.innerText = `7-Day Water Temp: ${stationName}`;
             loadingEl.style.display = 'block';
             loadingEl.className = 'loading';
-            loadingEl.innerText = 'Connecting directly to NOAA...';
+            loadingEl.innerText = 'Reading live buoy text file...';
             
             if (chartInstance) chartInstance.destroy();
 
-            // Create a strict ISO date string for 7 days ago
-            const d = new Date();
-            d.setDate(d.getDate() - 7);
-            
-            // CRITICAL FIX: Strip the fractional milliseconds (.123Z) from the time string!
-            // NOAA ERDDAP rejects milliseconds and will throw a server error if they are included.
-            const timeString = d.toISOString().split('.')[0] + 'Z'; 
-
-            // Safely URL-encoded for Safari: %22 is ("), %3E is (>)
-            const url = `https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json?time,wtmp&station=%22${stationId}%22&time%3E=${timeString}`;
+            // CRITICAL FIX: The /get endpoint wraps the text securely in JSON so Safari allows it through!
+            const ndbcUrl = `https://www.ndbc.noaa.gov/data/realtime2/${stationId}.txt`;
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(ndbcUrl)}`;
 
             try {
-                const response = await fetch(url);
-                if (!response.ok) throw new Error("NOAA ERDDAP database request failed");
-                const jsonData = await response.json();
+                const response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error("Proxy connection failed");
+                const json = await response.json();
                 
-                const rows = jsonData.table.rows;
+                if (!json.contents) throw new Error("Empty response from NDBC");
+                
+                const lines = json.contents.trim().split('\n');
                 const labels = [];
-                const waterTempF = [];
+                const waterTemp = [];
+                
+                const now = new Date();
+                const sevenDaysAgo = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
 
-                rows.forEach(row => {
-                    const dateObj = new Date(row[0]);
-                    labels.push(formatTime(dateObj));
+                // Parse standard NDBC text rows
+                for (let i = 2; i < lines.length; i++) {
+                    const cols = lines[i].trim().split(/\s+/);
+                    if (cols.length < 15) continue;
                     
-                    const tempC = parseFloat(row[1]);
-                    // Only convert and chart valid numbers. If NOAA reports a broken sensor (NaN), skip it gracefully.
-                    if (!isNaN(tempC)) {
-                        waterTempF.push((tempC * 9/5) + 32);
-                    } else {
-                        waterTempF.push(null);
-                    }
-                });
+                    const year = parseInt(cols[0]);
+                    const month = parseInt(cols[1]) - 1; 
+                    const day = parseInt(cols[2]);
+                    const hour = parseInt(cols[3]);
+                    const min = parseInt(cols[4]);
+                    
+                    const dateObj = new Date(Date.UTC(year, month, day, hour, min));
+                    
+                    // Stop reading once we hit 7 days ago
+                    if (dateObj < sevenDaysAgo) break;
 
-                if (waterTempF.length === 0) throw new Error("No recent temperature data found");
+                    const wtmpStr = cols[14]; 
+                    if (wtmpStr === "MM") continue; // Skip broken hourly reports
+                    
+                    const tempC = parseFloat(wtmpStr);
+                    const tempF = (tempC * 9/5) + 32;
+
+                    labels.unshift(formatTime(dateObj));
+                    waterTemp.unshift(tempF);
+                }
+
+                if (waterTemp.length === 0) throw new Error("No recent temperature data found");
 
                 loadingEl.style.display = 'none';
-                updateChart(labels, waterTempF);
+                updateChart(labels, waterTemp);
 
             } catch (error) {
                 console.error(error);
                 loadingEl.className = 'loading error-text';
-                loadingEl.innerText = "Data currently unavailable. The buoy may be offline or NOAA is delaying updates.";
+                loadingEl.innerText = "Error parsing NDBC text file. Safari tracking prevention may be blocking the connection.";
             }
         }
 
